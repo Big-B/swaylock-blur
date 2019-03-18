@@ -6,14 +6,33 @@ use structopt::StructOpt;
 
 #[derive(StructOpt)]
 struct Args {
-    #[structopt(long = "blur-sigma", default_value = "20")]
-    blur_sigma: usize,
+    #[structopt(long = "blur-sigma", default_value = "1.5")]
+    blur_sigma: f32,
+    #[structopt(long = "pixelate", short = "p")]
+    pixelate: bool,
+    #[structopt(long = "greyscale", short = "g")]
+    greyscale: bool,
 
     swaylock_args: Vec<String>,
 }
 
 fn main() {
     let args = Args::from_args();
+
+    // choose effect, blur or pixellate
+    let effect = if args.pixelate {
+        "-scale 10% -scale 1000%".to_owned()
+    } else {
+        format!(
+            "-filter Gaussian -resize 20% -define \"filter:sigma={}\" -resize 500.5%",
+            args.blur_sigma
+        )
+    };
+
+    let mut hue = "-level 0%,100%,0.6".to_owned();
+    if args.greyscale {
+        hue += " -set colorspace Gray -average";
+    };
 
     let outputs: Vec<i3ipc::reply::Output> = I3Connection::connect()
         .expect("failed to connect to i3/Sway ipc")
@@ -46,18 +65,18 @@ fn main() {
             .expect("failed to execute grim")
             .wait()
             .expect("failed to wait on grim");
-        Command::new("ffmpeg")
-            .args(&[
-                "-i",
-                &screenshot_path_string,
-                "-vf",
-                &format!("gblur=sigma={}", args.blur_sigma),
-                &blur_path_string,
-            ])
+
+        Command::new("convert")
+            .arg(&screenshot_path_string)
+            .args(hue.split_whitespace().collect::<Vec<&str>>())
+            .args(effect.split_whitespace().collect::<Vec<&str>>())
+            .arg("-fill")
+            .arg("black")
+            .arg(&blur_path_string)
             .spawn()
-            .expect("failed to execute ffmpeg")
+            .expect("failed to execute convert")
             .wait()
-            .expect("failed to wait on ffmpeg");
+            .expect("failed to wait on convert");
         swaylock_args.append(&mut vec![
             "-i".to_string(),
             format!("{}:{}", &output.name, &blur_path_string),
